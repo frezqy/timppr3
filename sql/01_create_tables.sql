@@ -1,86 +1,92 @@
--- удаляем старые таблицы, если они были, чтобы начать с чистого листа
-drop table if exists rule_violations cascade;
-drop table if exists blacklist cascade;
-drop table if exists incident_log cascade;
-drop table if exists incidents cascade;
-drop table if exists transactions cascade;
-drop table if exists security_rules cascade;
-drop table if exists operators cascade;
-drop table if exists clients cascade;
+DROP TABLE IF EXISTS public.incident_log CASCADE;
+DROP TABLE IF EXISTS public.incident_vulnerabilities CASCADE;
+DROP TABLE IF EXISTS public.vulnerabilities CASCADE;
+DROP TABLE IF EXISTS public.blacklist CASCADE;
+DROP TABLE IF EXISTS public.incidents CASCADE;
+DROP TABLE IF EXISTS public.rule_violations CASCADE;
+DROP TABLE IF EXISTS public.security_rules CASCADE;
+DROP TABLE IF EXISTS public.transactions CASCADE;
+DROP TABLE IF EXISTS public.operators CASCADE;
+DROP TABLE IF EXISTS public.clients CASCADE;
 
--- создание таблицы клиентов
-create table clients (
-    client_id serial primary key,
-    full_name varchar(150) not null,
-    email varchar(100) not null,
-    phone varchar(20),
-    reg_date timestamp default current_timestamp
+CREATE TABLE public.clients (
+    client_id SERIAL PRIMARY KEY,
+    last_name VARCHAR(100) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    patronymic VARCHAR(100),
+    email VARCHAR(150) NOT NULL UNIQUE,
+    phone VARCHAR(20),
+    reg_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- создание таблицы транзакций
-create table transactions (
-    tx_id serial primary key,
-    client_id int not null references clients(client_id),
-    amount decimal(10,2) not null,
-    tx_date timestamp default current_timestamp,
-    ip_address varchar(45) not null,
-    status varchar(50) not null default 'pending'
+CREATE TABLE public.operators (
+    operator_id SERIAL PRIMARY KEY,
+    last_name VARCHAR(100) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    patronymic VARCHAR(100),
+    position VARCHAR(100) NOT NULL
 );
 
--- создание таблицы правил безопасности (уязвимостей)
-create table security_rules (
-    rule_id serial primary key,
-    rule_name varchar(100) not null,
-    description text,
-    threshold decimal(15,2) not null
+CREATE TABLE public.transactions (
+    tx_id SERIAL PRIMARY KEY,
+    client_id INT NOT NULL REFERENCES public.clients(client_id) ON DELETE CASCADE,
+    amount DECIMAL(15,2) NOT NULL,
+    tx_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45) NOT NULL,
+    status VARCHAR(50) NOT NULL
 );
 
--- создание связующей таблицы нарушений правил
-create table rule_violations (
-    violation_id serial primary key,
-    tx_id int not null references transactions(tx_id),
-    rule_id int not null references security_rules(rule_id),
-    detected_at timestamp default current_timestamp
+CREATE TABLE public.security_rules (
+    rule_id SERIAL PRIMARY KEY,
+    rule_name VARCHAR(150) NOT NULL,
+    description TEXT,
+    threshold DECIMAL(15,2) NOT NULL
 );
 
--- создание таблицы операторов
-create table operators (
-    operator_id serial primary key,
-    full_name varchar(150) not null,
-    position varchar(100) not null
+CREATE TABLE public.rule_violations (
+    violation_id SERIAL PRIMARY KEY,
+    tx_id INT NOT NULL REFERENCES public.transactions(tx_id) ON DELETE CASCADE,
+    rule_id INT NOT NULL REFERENCES public.security_rules(rule_id) ON DELETE CASCADE,
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- создание главной таблицы инцидентов со всеми нужными полями для триггеров
-create table incidents (
-    incident_id serial primary key,
-    created_at timestamp default current_timestamp,
-    last_modified timestamp default current_timestamp,
-    incident_type varchar(100),
-    threat_level int default 3,
-    status varchar(50) default 'open',
-    description text,
-    tx_id int references transactions(tx_id),
-    operator_id int references operators(operator_id),
-    closed_at timestamp
+CREATE TABLE public.incidents (
+    incident_id SERIAL PRIMARY KEY,
+    tx_id INT NOT NULL REFERENCES public.transactions(tx_id) ON DELETE CASCADE,
+    operator_id INT NOT NULL REFERENCES public.operators(operator_id) ON DELETE RESTRICT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    threat_level INT NOT NULL,
+    status VARCHAR(50) NOT NULL
 );
 
--- создание таблицы черного списка
-create table blacklist (
-    blacklist_id serial primary key,
-    entity_type varchar(50) not null,
-    entity_value varchar(255) not null unique,
-    reason text,
-    added_at timestamp default current_timestamp,
-    operator_id int references operators(operator_id)
+CREATE TABLE public.blacklist (
+    blacklist_id SERIAL PRIMARY KEY,
+    operator_id INT NOT NULL REFERENCES public.operators(operator_id) ON DELETE RESTRICT,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_value VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- создание служебной таблицы для триггера аудита
-create table incident_log (
-    log_id serial primary key,
-    incident_id int,
-    action_type varchar(50),
-    old_status varchar(50),
-    new_status varchar(50),
-    changed_at timestamp default current_timestamp,
-    changed_by varchar(100) default current_user
+CREATE TABLE public.vulnerabilities (
+    vulnerability_id SERIAL PRIMARY KEY,
+    vulnerability_name VARCHAR(150) NOT NULL,
+    cve_id VARCHAR(50),
+    severity VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE public.incident_vulnerabilities (
+    incident_id INT REFERENCES public.incidents(incident_id) ON DELETE CASCADE,
+    vulnerability_id INT REFERENCES public.vulnerabilities(vulnerability_id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, vulnerability_id)
+);
+
+CREATE TABLE public.incident_log (
+    log_id SERIAL PRIMARY KEY,
+    incident_id INT NOT NULL,
+    action_type VARCHAR(50) NOT NULL,
+    old_status VARCHAR(50),
+    new_status VARCHAR(50),
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    changed_by VARCHAR(100) DEFAULT current_user
 );

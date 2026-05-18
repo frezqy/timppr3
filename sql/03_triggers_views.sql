@@ -1,108 +1,103 @@
--- 1. функция подсчета среднего времени
-create or replace function avg_response_time(p_operator_id int) returns numeric as $$
-declare
-    avg_minutes numeric;
-begin
-    select coalesce(avg(extract(epoch from (last_modified - created_at))/60), 0)
-    into avg_minutes from incidents
-    where operator_id = p_operator_id and status = 'closed';
-    return round(avg_minutes, 2);
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION avg_response_time(p_operator_id INT) RETURNS NUMERIC AS $$
+DECLARE
+    avg_minutes NUMERIC;
+BEGIN
+    SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/60), 0)
+    INTO avg_minutes FROM public.incidents
+    WHERE operator_id = p_operator_id AND status = 'Closed';
+    RETURN ROUND(avg_minutes, 2);
+END;
+$$ LANGUAGE plpgsql;
 
--- 2. функция проверки угрозы
-create or replace function check_threat_level(p_incident_id int) returns boolean as $$
-declare
-    t_level int;
-begin
-    select threat_level into t_level from incidents where incident_id = p_incident_id;
-    return (t_level >= 1 and t_level <= 5);
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION check_threat_level(p_incident_id INT) RETURNS BOOLEAN AS $$
+DECLARE
+    t_level INT;
+BEGIN
+    SELECT threat_level INTO t_level FROM public.incidents WHERE incident_id = p_incident_id;
+    RETURN (t_level >= 1 AND t_level <= 5);
+END;
+$$ LANGUAGE plpgsql;
 
--- 3. функция подсчета инцидентов
-create or replace function count_incidents_period(start_date timestamp, end_date timestamp) returns int as $$
-declare
-    total_count int;
-begin
-    select count(*) into total_count from incidents where created_at between start_date and end_date;
-    return total_count;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION count_incidents_period(start_date TIMESTAMP, end_date TIMESTAMP) RETURNS INT AS $$
+DECLARE
+    total_count INT;
+BEGIN
+    SELECT COUNT(*) INTO total_count FROM public.incidents WHERE created_at BETWEEN start_date AND end_date;
+    RETURN total_count;
+END;
+$$ LANGUAGE plpgsql;
 
--- 4. функция самых частых уязвимостей
-create or replace function top_vulnerabilities() returns table(rule_name varchar, usage_count bigint) as $$
-begin
-    return query
-    select sr.rule_name, count(rv.violation_id) as usage_count
-    from security_rules sr
-    join rule_violations rv on sr.rule_id = rv.rule_id
-    group by sr.rule_name
-    order by usage_count desc;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION top_vulnerabilities() RETURNS TABLE(rule_name VARCHAR, usage_count BIGINT) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT sr.rule_name::VARCHAR, COUNT(rv.violation_id) AS usage_count
+    FROM public.security_rules sr
+    JOIN public.rule_violations rv ON sr.rule_id = rv.rule_id
+    GROUP BY sr.rule_name
+    ORDER BY usage_count DESC;
+END;
+$$ LANGUAGE plpgsql;
 
--- функции для 5 триггеров
-create or replace function log_incident_changes() returns trigger as $$
-begin
-    if TG_OP = 'INSERT' then
-        insert into incident_log (incident_id, action_type, new_status) values (NEW.incident_id, 'INSERT', NEW.status);
-    elsif TG_OP = 'UPDATE' then
-        if OLD.status is distinct from NEW.status then
-            insert into incident_log (incident_id, action_type, old_status, new_status) values (NEW.incident_id, 'UPDATE', OLD.status, NEW.status);
-        end if;
-    end if;
-    return NEW;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION log_incident_changes() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO public.incident_log (incident_id, action_type, new_status) 
+        VALUES (NEW.incident_id, 'INSERT', NEW.status);
+    ELSIF TG_OP = 'UPDATE' THEN
+        IF OLD.status IS DISTINCT FROM NEW.status THEN
+            INSERT INTO public.incident_log (incident_id, action_type, old_status, new_status) 
+            VALUES (NEW.incident_id, 'UPDATE', OLD.status, NEW.status);
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-create or replace function enforce_threat_level() returns trigger as $$
-begin
-    if NEW.threat_level < 1 or NEW.threat_level > 5 or NEW.threat_level is null then
+CREATE OR REPLACE FUNCTION enforce_threat_level() RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.threat_level < 1 OR NEW.threat_level > 5 OR NEW.threat_level IS NULL THEN
         NEW.threat_level := 3;
-    end if;
-    return NEW;
-end;
-$$ language plpgsql;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-create or replace function prevent_open_incident_delete() returns trigger as $$
-begin
-    if OLD.status != 'closed' then
-        raise exception 'Нельзя удалить инцидент, пока он не закрыт!';
-    end if;
-    return OLD;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION prevent_open_incident_delete() RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status != 'Closed' THEN
+        RAISE EXCEPTION 'Нельзя удалить инцидент, пока он не закрыт!';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
 
-create or replace function update_last_modified() returns trigger as $$
-begin
-    NEW.last_modified := current_timestamp;
-    return NEW;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION update_last_modified() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-create or replace function escalate_critical_rule() returns trigger as $$
-declare
-    rule_thresh decimal;
-begin
-    select threshold into rule_thresh from security_rules where rule_id = NEW.rule_id;
-    if rule_thresh = 0 then
-        update incidents set threat_level = 5 where tx_id = NEW.tx_id;
-    end if;
-    return NEW;
-end;
-$$ language plpgsql;
+CREATE OR REPLACE FUNCTION escalate_critical_rule() RETURNS TRIGGER AS $$
+DECLARE
+    rule_thresh DECIMAL;
+BEGIN
+    SELECT threshold INTO rule_thresh FROM public.security_rules WHERE rule_id = NEW.rule_id;
+    IF rule_thresh = 0 THEN
+        UPDATE public.incidents SET threat_level = 5 WHERE tx_id = NEW.tx_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- удаляем старые триггеры перед созданием
-drop trigger if exists trg_incident_audit on incidents;
-drop trigger if exists trg_check_threat on incidents;
-drop trigger if exists trg_prevent_delete on incidents;
-drop trigger if exists trg_last_modified on incidents;
-drop trigger if exists trg_escalate_critical on rule_violations;
+DROP TRIGGER IF EXISTS trg_incident_audit ON public.incidents;
+DROP TRIGGER IF EXISTS trg_check_threat ON public.incidents;
+DROP TRIGGER IF EXISTS trg_prevent_delete ON public.incidents;
+DROP TRIGGER IF EXISTS trg_last_modified ON public.incidents;
+DROP TRIGGER IF EXISTS trg_escalate_critical ON public.rule_violations;
 
--- создаем 5 триггеров
-create trigger trg_incident_audit after insert or update on incidents for each row execute function log_incident_changes();
-create trigger trg_check_threat before insert or update on incidents for each row execute function enforce_threat_level();
-create trigger trg_prevent_delete before delete on incidents for each row execute function prevent_open_incident_delete();
-create trigger trg_last_modified before update on incidents for each row execute function update_last_modified();
-create trigger trg_escalate_critical after insert on rule_violations for each row execute function escalate_critical_rule();
+CREATE TRIGGER trg_incident_audit AFTER INSERT OR UPDATE ON public.incidents FOR EACH ROW EXECUTE FUNCTION log_incident_changes();
+CREATE TRIGGER trg_check_threat BEFORE INSERT OR UPDATE ON public.incidents FOR EACH ROW EXECUTE FUNCTION enforce_threat_level();
+CREATE TRIGGER trg_prevent_delete BEFORE DELETE ON public.incidents FOR EACH ROW EXECUTE FUNCTION prevent_open_incident_delete();
+CREATE TRIGGER trg_last_modified BEFORE UPDATE ON public.incidents FOR EACH ROW EXECUTE FUNCTION update_last_modified();
+CREATE TRIGGER trg_escalate_critical AFTER INSERT ON public.rule_violations FOR EACH ROW EXECUTE FUNCTION escalate_critical_rule();
